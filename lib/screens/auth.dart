@@ -1,6 +1,8 @@
 import 'dart:io';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 
 import '../widgets/user_image_picker.dart';
@@ -19,22 +21,43 @@ class _AuthScreenState extends State<AuthScreen> {
   final _form = GlobalKey<FormState>();
   var _enteredEmail = '';
   var _enteredPassword = '';
-  File? _pickedImage;
+  var _enteredUserName = '';
+  File? _selectedImage;
+  var _isAuthenticating = false;
 
   void _submit() async {
     final isValid = _form.currentState!.validate();
-    if (!isValid || (_pickedImage == null && !_isLogging)) {
+
+    if (!isValid || _selectedImage == null && (!_isLogging)) {
       return;
     }
 
     _form.currentState!.save();
     try {
+      setState(() {
+        _isAuthenticating = true;
+      });
       if (_isLogging) {
-        await _firebase.signInWithEmailAndPassword(
+        final userCredentials = await _firebase.signInWithEmailAndPassword(
             email: _enteredEmail, password: _enteredPassword);
       } else {
-        await _firebase.createUserWithEmailAndPassword(
+        final userCredentials = await _firebase.createUserWithEmailAndPassword(
             email: _enteredEmail, password: _enteredPassword);
+        final storageRef = FirebaseStorage.instance
+            .ref()
+            .child('user_images')
+            .child('${userCredentials.user!.uid}.jpg');
+
+        await storageRef.putFile(_selectedImage!);
+        final imageUrl = await storageRef.getDownloadURL();
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(userCredentials.user!.uid)
+            .set({
+          'username': _enteredUserName,
+          'email': _enteredEmail,
+          'image_url': imageUrl,
+        });
       }
     } on FirebaseAuthException catch (error) {
       if (error.code == 'email-already-in-use') {
@@ -48,6 +71,9 @@ class _AuthScreenState extends State<AuthScreen> {
           ),
         );
       }
+      setState(() {
+        _isAuthenticating = false;
+      });
     }
   }
 
@@ -78,7 +104,7 @@ class _AuthScreenState extends State<AuthScreen> {
                           if (!_isLogging)
                             UserImagePicker(
                               onPickImage: (pickedImage) {
-                                _pickedImage = _pickedImage;
+                                _selectedImage = pickedImage;
                               },
                             ),
                           TextFormField(
@@ -97,6 +123,21 @@ class _AuthScreenState extends State<AuthScreen> {
                             },
                             onSaved: (email) => _enteredEmail = email!,
                           ),
+                          if (!_isLogging)
+                            TextFormField(
+                              decoration:
+                                  const InputDecoration(labelText: 'Username'),
+                              validator: (username) {
+                                if (username == null ||
+                                    username.isEmpty ||
+                                    username.trim().length < 4) {
+                                  return 'Please enter at least 4 characters.';
+                                }
+                                return null;
+                              },
+                              onSaved: (username) =>
+                                  _enteredUserName = username!,
+                            ),
                           TextFormField(
                             decoration:
                                 const InputDecoration(labelText: 'Password'),
@@ -112,24 +153,27 @@ class _AuthScreenState extends State<AuthScreen> {
                           const SizedBox(
                             height: 12,
                           ),
-                          ElevatedButton(
-                            onPressed: _submit,
-                            style: ElevatedButton.styleFrom(
-                                backgroundColor: Theme.of(context)
-                                    .colorScheme
-                                    .primaryContainer),
-                            child: Text(_isLogging ? 'Login' : 'Signup'),
-                          ),
-                          TextButton(
-                            onPressed: () {
-                              setState(() {
-                                _isLogging = !_isLogging;
-                              });
-                            },
-                            child: Text(_isLogging
-                                ? 'Create an account'
-                                : 'I already have an account.Login'),
-                          )
+                          _isAuthenticating
+                              ? const CircularProgressIndicator()
+                              : ElevatedButton(
+                                  onPressed: _submit,
+                                  style: ElevatedButton.styleFrom(
+                                      backgroundColor: Theme.of(context)
+                                          .colorScheme
+                                          .primaryContainer),
+                                  child: Text(_isLogging ? 'Login' : 'Signup'),
+                                ),
+                          if (!_isAuthenticating)
+                            TextButton(
+                              onPressed: () {
+                                setState(() {
+                                  _isLogging = !_isLogging;
+                                });
+                              },
+                              child: Text(_isLogging
+                                  ? 'Create an account'
+                                  : 'I already have an account.Login'),
+                            )
                         ],
                       ),
                     ),
